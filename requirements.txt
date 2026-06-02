@@ -10,3 +10,4 @@ transformers
 torch
 nltk
 scikit-learn
+xgboost
