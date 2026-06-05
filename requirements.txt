@@ -5,7 +5,8 @@ joblib
 plotly
 shap
 matplotlib
-yfinance
+yfinance>=0.2.40
 nltk
 xgboost==2.0.3
 scikit-learn==1.2.2
+easyocr
