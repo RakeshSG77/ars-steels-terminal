@@ -73,8 +73,26 @@ div.stButton > button:hover { background: #38BDF8 !important; color: #030712 !im
 @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
 @keyframes pulse-gold { 0% { box-shadow: 0 0 0 0 rgba(200, 168, 75, 0.4); } 70% { box-shadow: 0 0 0 8px rgba(200, 168, 75, 0); } 100% { box-shadow: 0 0 0 0 rgba(200, 168, 75, 0); } }
 
+.verdict-box { border-radius: 6px; padding: 1rem; text-align: center; border: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(5px); }
+.verdict-box.buy { border-color: #10B981; animation: pulse-green 2s infinite; }
+.verdict-box.sell { border-color: #EF4444; animation: pulse-red 2s infinite; }
+.verdict-box.hold { border-color: #C8A84B; animation: pulse-gold 2s infinite; }
+.verdict-title { font-family: 'Orbitron', sans-serif; font-size: 0.9rem; font-weight: 700; letter-spacing: 2px; }
+.verdict-buy-text { color: #10B981; } .verdict-sell-text { color: #EF4444; } .verdict-hold-text { color: #C8A84B; }
+.verdict-desc { font-family: 'Inter', sans-serif; font-size: 0.75rem; color: #94A3B8; margin-top: 0.5rem; }
+
+/* ── Custom Tab Styling (More Compact) ── */
+.stTabs [data-baseweb="tab-list"] { background-color: transparent; gap: 4px; padding-bottom: 0px; }
+.stTabs [data-baseweb="tab"] { font-family: 'Orbitron', sans-serif; font-size: 0.7rem; font-weight: 600; color: #64748B; background-color: #0F172A; border: 1px solid #1E293B; border-bottom: none; border-radius: 4px 4px 0 0; padding: 6px 12px; }
+.stTabs [aria-selected="true"] { color: #38BDF8 !important; background-color: rgba(56, 189, 248, 0.1); border-color: #38BDF8; box-shadow: inset 0 2px 0 0 #38BDF8; }
+
+/* ── DataFrame / Table Adjustments ── */
+[data-testid="stDataFrame"] { font-family: 'Inter', monospace; font-size: 0.75rem; }
+
+/* ── Sidebar Fine-tuning ── */
 [data-testid="stSidebar"] { background-color: #020617 !important; border-right: 1px solid #1E293B; padding-top: 1rem; }
 .sidebar-head { font-family: 'Orbitron', sans-serif; color: #C8A84B; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; border-bottom: 1px solid #1E293B; padding-bottom: 0.8rem; }
+.stTextInput label { font-family: 'Rajdhani', sans-serif !important; font-size: 0.8rem !important; color: #94A3B8 !important; }
 
 /* ── LIVE TV TICKER ANIMATION ── */
 .ticker-wrap { width: 100%; overflow: hidden; background-color: #020617; border-top: 1px solid #38BDF8; border-bottom: 1px solid #38BDF8; padding: 5px 0; margin-bottom: 8px; white-space: nowrap; }
@@ -90,12 +108,12 @@ div.stButton > button:hover { background: #38BDF8 !important; color: #030712 !im
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────
-# 2. DATA & MODEL PIPELINE
+# 2. DATA & MODEL PIPELINE (PRODUCTION READY)
 # ─────────────────────────────────────────────────────────
 def init_db():
     if not os.path.exists(DB_NAME):
         try:
-            df_initial = pd.read_csv('ARS_Steels_Dataset.csv')
+            df_initial = pd.read_csv('ARS_Steels_Accurate_Extracted_Dataset.csv')
             conn = sqlite3.connect(DB_NAME)
             df_initial.to_sql('market_data', conn, if_exists='replace', index=False)
             conn.close()
@@ -118,7 +136,15 @@ def engineer_features(df):
     d = df.copy()
     d['Price_Momentum_1W'] = d.get('ARS_Price_Lag_1W', 0) - d.get('ARS_Price_Lag_2W', 0)
     d['Price_Velocity'] = d.get('ARS_Price_Lag_1W', 0) - d.get('ARS_Price_Rolling_Mean_4W', 0)
-    d['Cost_Pressure_Index'] = (0.40 * d.get('Scrap_Metal_Price_per_Ton', 0) + 0.35 * d.get('Iron_Ore_Price_per_Ton', 0) + 0.15 * d.get('Coking_Coal_Price_per_Ton', 0) + 0.10 * d.get('Diesel_Price_Chennai', 0) * 10)
+    d['Cost_Pressure_Index'] = (
+        0.20 * d.get('Scrap_Metal_Price_per_Ton', 0) +
+        0.20 * d.get('Turkey_Scrap_Metal_Price_INR_per_Ton', 0) +
+        0.25 * d.get('Iron_Ore_Price_per_Ton', 0) +
+        0.10 * d.get('CDRI_Raipur_Price_INR_per_Ton', 0) +
+        0.10 * d.get('Coking_Coal_Price_per_Ton', 0) +
+        0.05 * d.get('RB2_Coal_Gangavaram_Price_INR_per_Ton', 0) +
+        0.10 * d.get('Diesel_Price_Chennai', 0) * 10
+    )
     d['Competitor_Premium'] = d.get('ARS_Price_Lag_1W', 0) - d.get('Competitor_Avg_Price_per_Ton', 0)
     d['Volatility_Proxy'] = abs(d.get('ARS_Price_Lag_1W', 0) - d.get('ARS_Price_Lag_2W', 0))
     return d
@@ -136,20 +162,25 @@ def ingest_and_retrain(new_data_df):
         
     combined_df = combined_df.sort_values('Date').reset_index(drop=True)
     combined_df = combined_df.ffill()
+    
     combined_df['Week_Number'] = combined_df['Date'].dt.isocalendar().week
     combined_df['Month'] = combined_df['Date'].dt.month
     combined_df['Year'] = combined_df['Date'].dt.year
+    
     combined_df['ARS_Price_Lag_1W'] = combined_df['ARS_TMT_Price_per_Ton'].shift(1).bfill()
     combined_df['ARS_Price_Lag_2W'] = combined_df['ARS_TMT_Price_per_Ton'].shift(2).bfill()
     combined_df['ARS_Price_Rolling_Mean_4W'] = combined_df['ARS_TMT_Price_per_Ton'].shift(1).rolling(window=4, min_periods=1).mean().bfill()
+    
     combined_df['Date'] = combined_df['Date'].dt.strftime('%Y-%m-%d')
     combined_df.to_sql('market_data', conn, if_exists='replace', index=False)
     conn.close()
     
     pipeline_cache, features_cache = load_model()
     df_engineered = engineer_features(combined_df)
+    
     for f in features_cache:
-        if f not in df_engineered.columns: df_engineered[f] = 0
+        if f not in df_engineered.columns:
+            df_engineered[f] = 0
             
     pipeline_cache.fit(df_engineered[features_cache].fillna(0), df_engineered['ARS_TMT_Price_per_Ton'])
     joblib.dump(pipeline_cache, 'ars_pricing_pipeline.pkl')
@@ -167,27 +198,65 @@ if not df.empty:
     latest = df.iloc[-1].copy()
     prev_price = latest.get('ARS_TMT_Price_per_Ton', 0)
 else:
-    latest = pd.Series({'USD_to_INR': 83.0, 'RBI_Repo_Rate': 6.5, 'Diesel_Price_Chennai': 92.0, 'Scrap_Metal_Price_per_Ton': 35000, 'Iron_Ore_Price_per_Ton': 5000, 'Coking_Coal_Price_per_Ton': 20000, 'Competitor_Avg_Price_per_Ton': 55000, 'ARS_TMT_Price_per_Ton': 55000, 'ARS_Price_Lag_1W': 55000, 'ARS_Price_Lag_2W': 55000, 'ARS_Price_Rolling_Mean_4W': 55000})
+    latest = pd.Series({'USD_to_INR': 83.0, 'RBI_Repo_Rate': 6.5, 'Diesel_Price_Chennai': 92.0, 'Scrap_Metal_Price_per_Ton': 35000, 'Iron_Ore_Price_per_Ton': 5000, 'Coking_Coal_Price_per_Ton': 20000, 'Turkey_Scrap_Metal_Price_INR_per_Ton': 35000, 'CDRI_Raipur_Price_INR_per_Ton': 28000, 'PDRI_Bellary_Price_INR_per_Ton': 27000, 'PDRI_Hyderabad_Price_INR_per_Ton': 27500, 'PDRI_Raipur_Price_INR_per_Ton': 26500, 'RB2_Coal_Gangavaram_Price_INR_per_Ton': 10000, 'Competitor_Avg_Price_per_Ton': 55000, 'ARS_TMT_Price_per_Ton': 55000, 'ARS_Price_Lag_1W': 55000, 'ARS_Price_Lag_2W': 55000, 'ARS_Price_Rolling_Mean_4W': 55000})
     prev_price = 55000
 
 # ─────────────────────────────────────────────────────────
-# 3. SIDEBAR SIMULATION CONTROLS
+# 3. SIDEBAR SIMULATION CONTROLS (TEXT INPUTS + VALIDATION)
 # ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown('<div class="sidebar-head">MARKET SIMULATION ENGINE</div>', unsafe_allow_html=True)
-    usd_inr = st.slider("USD / INR", 60.0, 110.0, float(latest['USD_to_INR']), 0.25)
-    repo = st.slider("RBI Repo Rate (%)", 3.0, 10.0, float(latest['RBI_Repo_Rate']), 0.05)
-    diesel = st.slider("Diesel (₹/L)", 50.0, 150.0, float(latest['Diesel_Price_Chennai']), 0.5)
+    
+    usd_inr_raw = st.text_input("USD / INR", value=str(float(latest['USD_to_INR'])))
+    repo_raw = st.text_input("RBI Repo Rate (%)", value=str(float(latest['RBI_Repo_Rate'])))
+    diesel_raw = st.text_input("Diesel (₹/L)", value=str(float(latest['Diesel_Price_Chennai'])))
     st.markdown("<br>", unsafe_allow_html=True)
-    scrap = st.slider("Scrap Metal (₹/Ton)", 10000, 70000, int(latest['Scrap_Metal_Price_per_Ton']), 500)
-    iron_ore = st.slider("Iron Ore (₹/Ton)", 2000, 25000, int(latest['Iron_Ore_Price_per_Ton']), 200)
-    coking_coal = st.slider("Coking Coal (₹/Ton)", 5000, 50000, int(latest['Coking_Coal_Price_per_Ton']), 500)
-    competitor = st.slider("Competitor Avg (₹/Ton)", 30000, 100000, int(latest['Competitor_Avg_Price_per_Ton']), 500)
+    
+    scrap_raw = st.text_input("Scrap Metal (₹/Ton)", value=str(int(latest.get('Scrap_Metal_Price_per_Ton', 35000))))
+    turkey_scrap_raw = st.text_input("Turkey Scrap (₹/Ton)", value=str(int(latest.get('Turkey_Scrap_Metal_Price_INR_per_Ton', 35000))))
+    iron_ore_raw = st.text_input("Iron Ore (₹/Ton)", value=str(int(latest.get('Iron_Ore_Price_per_Ton', 5000))))
+    coking_coal_raw = st.text_input("Coking Coal (₹/Ton)", value=str(int(latest.get('Coking_Coal_Price_per_Ton', 20000))))
+    rb2_coal_raw = st.text_input("RB2 Coal (₹/Ton)", value=str(int(latest.get('RB2_Coal_Gangavaram_Price_INR_per_Ton', 10000))))
+    cdri_raipur_raw = st.text_input("CDRI Raipur (₹/Ton)", value=str(int(latest.get('CDRI_Raipur_Price_INR_per_Ton', 28000))))
+    pdri_bellary_raw = st.text_input("PDRI Bellary (₹/Ton)", value=str(int(latest.get('PDRI_Bellary_Price_INR_per_Ton', 27000))))
+    pdri_hyd_raw = st.text_input("PDRI Hyderabad (₹/Ton)", value=str(int(latest.get('PDRI_Hyderabad_Price_INR_per_Ton', 27500))))
+    pdri_raipur_raw = st.text_input("PDRI Raipur (₹/Ton)", value=str(int(latest.get('PDRI_Raipur_Price_INR_per_Ton', 26500))))
+    competitor_raw = st.text_input("Competitor Avg (₹/Ton)", value=str(int(latest.get('Competitor_Avg_Price_per_Ton', 55000))))
 
+# Robust Text & Positive Value Validation
+try:
+    usd_inr = float(usd_inr_raw)
+    repo = float(repo_raw)
+    diesel = float(diesel_raw)
+    scrap = float(scrap_raw)
+    turkey_scrap = float(turkey_scrap_raw)
+    iron_ore = float(iron_ore_raw)
+    coking_coal = float(coking_coal_raw)
+    rb2_coal = float(rb2_coal_raw)
+    cdri_raipur = float(cdri_raipur_raw)
+    pdri_bellary = float(pdri_bellary_raw)
+    pdri_hyd = float(pdri_hyd_raw)
+    pdri_raipur = float(pdri_raipur_raw)
+    competitor = float(competitor_raw)
+    
+    # Check for negative values
+    inputs_list = [usd_inr, repo, diesel, scrap, turkey_scrap, iron_ore, coking_coal, rb2_coal, cdri_raipur, pdri_bellary, pdri_hyd, pdri_raipur, competitor]
+    if any(val < 0 for val in inputs_list):
+        st.error("🚨 **INVALID DATA DETECTED:** Please provide valid positive data. Negative values are not allowed.")
+        st.stop()
+        
+except ValueError:
+    st.error("🚨 **INVALID DATA DETECTED:** Please enter valid numbers only in the sidebar inputs.")
+    st.stop()
+
+# Simulate current input
 raw_input = pd.DataFrame([{
     'Diesel_Price_Chennai': diesel, 'RBI_Repo_Rate': repo, 'USD_to_INR': usd_inr,
     'Iron_Ore_Price_per_Ton': iron_ore, 'Coking_Coal_Price_per_Ton': coking_coal,
     'Scrap_Metal_Price_per_Ton': scrap, 'Competitor_Avg_Price_per_Ton': competitor,
+    'Turkey_Scrap_Metal_Price_INR_per_Ton': turkey_scrap, 'RB2_Coal_Gangavaram_Price_INR_per_Ton': rb2_coal,
+    'CDRI_Raipur_Price_INR_per_Ton': cdri_raipur, 'PDRI_Bellary_Price_INR_per_Ton': pdri_bellary,
+    'PDRI_Hyderabad_Price_INR_per_Ton': pdri_hyd, 'PDRI_Raipur_Price_INR_per_Ton': pdri_raipur,
     'ARS_Price_Lag_1W': latest.get('ARS_TMT_Price_per_Ton', 0), 
     'ARS_Price_Lag_2W': latest.get('ARS_Price_Lag_1W', latest.get('ARS_TMT_Price_per_Ton', 0)), 
     'ARS_Price_Rolling_Mean_4W': latest.get('ARS_Price_Rolling_Mean_4W', latest.get('ARS_TMT_Price_per_Ton', 0))
@@ -212,15 +281,47 @@ def generate_kpi_card(title, value, delta):
     return f'<div class="tech-card"><div class="card-label">{title}</div><div class="card-value">₹{value:,.0f}</div><div class="card-delta {color_class}">{sign}{delta:,.0f} vs Prev</div></div>'
 
 # ─────────────────────────────────────────────────────────
-# 4. MAIN LAYOUT
+# 4. MAIN LAYOUT & TICKER
 # ─────────────────────────────────────────────────────────
 st.markdown('<p class="glow-title">ARS STEELS</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">PREDICTIVE PRICING & MARKET INTELLIGENCE TERMINAL</p>', unsafe_allow_html=True)
 
-st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
-st.markdown(generate_kpi_card("AI Target Price", final_price, ai_delta) + generate_kpi_card("Market Competitor Avg", competitor, comp_delta) + generate_kpi_card("Scrap Metal Trajectory", scrap, scrap_delta) + generate_kpi_card("Cost Pressure Index", input_df['Cost_Pressure_Index'].iloc[0], cost_idx_delta) + '</div>', unsafe_allow_html=True)
+# Generate Fake Live Ticker Data
+ticker_data = [
+    {"name": "NIFTY METALS", "price": "8,102.4", "delta": "+1.2%"},
+    {"name": "BSE SENSEX", "price": "73,120", "delta": "-0.4%"},
+    {"name": "LME STEEL SCRAP", "price": "$410", "delta": "+0.8%"},
+    {"name": "BRENT CRUDE", "price": "$82.40", "delta": "+1.5%"},
+    {"name": "USD/INR", "price": "83.15", "delta": "-0.1%"},
+    {"name": "GLOBAL IRON ORE", "price": "$125", "delta": "+2.0%"},
+    {"name": "SHANGHAI REBAR", "price": "¥3,500", "delta": "-1.1%"}
+]
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["[ ⚡ ALGORITHMIC BREAKDOWN ]", "[ 🌐 MARKET TOPOLOGY ]", "[ 📊 HISTORICAL BACKTEST ]", "[ 🔄 CONTINUOUS LEARNING HUB ]", "[ 🗄️ DATABASE ADMIN ]", "[ 📰 FINANCIAL TERMINAL ]"])
+ticker_html = '<div class="ticker-wrap"><div class="ticker">'
+for item in ticker_data:
+    color_class = "ticker-up" if "+" in item["delta"] else "ticker-down"
+    ticker_html += f'<div class="ticker-item"><span class="ticker-name">{item["name"]}</span><span class="ticker-price">{item["price"]}</span><span class="{color_class}">{item["delta"]}</span></div>'
+ticker_html += '</div></div>'
+st.markdown(ticker_html, unsafe_allow_html=True)
+
+st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
+st.markdown(
+    generate_kpi_card("AI Target Price", final_price, ai_delta) + 
+    generate_kpi_card("Market Competitor Avg", competitor, comp_delta) + 
+    generate_kpi_card("Scrap Metal Trajectory", scrap, scrap_delta) + 
+    generate_kpi_card("Cost Pressure Index", input_df['Cost_Pressure_Index'].iloc[0], cost_idx_delta) + 
+    '</div>', 
+    unsafe_allow_html=True
+)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "[ ⚡ ALGORITHMIC BREAKDOWN ]", 
+    "[ 🌐 MARKET TOPOLOGY ]", 
+    "[ 📊 HISTORICAL BACKTEST ]", 
+    "[ 🔄 CONTINUOUS LEARNING HUB ]", 
+    "[ 🗄️ DATABASE ADMIN ]",
+    "[ 📰 FINANCIAL TERMINAL ]"
+])
 
 # ══════════════════════════════════════════════════════════
 # DATA PROCESSING SUB-TABS (1 - 5)
@@ -357,7 +458,6 @@ with tab5:
 # TAB 6 — NEON FINANCIAL TERMINAL (WINDOW SCALED & FIXED FEED)
 # ══════════════════════════════════════════════════════════
 with tab6:
-    # --- 1. GLOBAL STOCK MARKET OVERLAY ---
     @st.cache_data(ttl=300, show_spinner=False)
     def fetch_live_equities(ai_price, p_price):
         tickers = {
@@ -406,14 +506,10 @@ with tab6:
     ticker_html += '</div></div>'
     st.markdown(ticker_html, unsafe_allow_html=True)
 
-    # --- 2. ADVANCED SCRAIPING PROTOCOL (BROWSER PROFILED) ---
     @st.cache_data(ttl=1800, show_spinner=False)
     def fetch_vader_sentiment():
-        # Using a simulated User-Agent to bypass regional network scraping restrictions
         url = "https://news.google.com/rss/search?q=steel+prices+market+india&hl=en-IN&gl=IN&ceid=IN:en"
         news_data, words_pool = [], []
-        
-        # Extended fallback archive to cover comprehensive sector reporting
         fallback_df = pd.DataFrame([
             {"Headline": "India Fastest-Growing Steel Market Even As Global Prices Surge: Goldman Sachs", "Published": "Today", "Score": 0.65, "Sentiment": "BULLISH 📈", "Color": "#10B981"},
             {"Headline": "Tata Steel CEO TV Narendran cautiously optimistic; sees strong Q1 ahead as steel prices rise across India", "Published": "Today", "Score": 0.45, "Sentiment": "BULLISH 📈", "Color": "#10B981"},
@@ -426,7 +522,6 @@ with tab6:
         fallback_words = [("global", 5), ("across", 4), ("goldman", 3), ("prices", 3), ("growth", 2)]
 
         try:
-            # Emulating standard browser configuration to bridge connection blockages
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
             root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
             sia = SentimentIntensityAnalyzer()
@@ -458,7 +553,6 @@ with tab6:
     with st.spinner("Processing VADER NLP Data Matrices..."):
         news_df, top_buzzwords = fetch_vader_sentiment()
 
-    # --- 3. EXECUTIVE MASTER SIGNAL ACTION PLAN ---
     avg_sentiment = round(news_df['Score'].mean(), 2)
     ai_trend_pct = ((final_price - prev_price) / prev_price) * 100 if prev_price != 0 else 0
     composite_score = (ai_trend_pct * 0.7) + (avg_sentiment * 10 * 0.3)
@@ -473,12 +567,11 @@ with tab6:
         if st.button("🔄 REFRESH CORE DATA"):
             fetch_live_equities.clear()
             fetch_vader_sentiment.clear()
-            st.st.rerun()
+            st.rerun()
             
     v_html = f"<div style='background: rgba(15, 23, 42, 0.6); padding: 10px 12px; border-radius: 6px; border: 1px solid {v_color}; text-align: center; margin-bottom: 10px; animation: {pulse_class} 2s infinite;'><h4 style='color: #94A3B8; margin-top: 0; font-family: Inter; text-transform: uppercase; font-size: 0.7rem;'>Synthesized AI Action Plan</h4><h1 style='color: {v_color}; font-size: 1.5rem; margin: 2px 0; font-family: Orbitron; font-weight: 900; text-shadow: 0 0 10px {v_color};'>{v_icon} {verdict}</h1><p style='color: #E2E8F0; font-size: 0.78rem; margin-bottom: 0;'>{v_sub}</p></div>"
     st.markdown(v_html, unsafe_allow_html=True)
 
-    # --- 4. GAUGES ROW (COMPACT HEIGHT) ---
     col_g1, col_g2, col_g3 = st.columns([1.2, 1.1, 1.7])
     with col_g1:
         st.markdown('<p style="color:#38BDF8; font-weight:700; font-size:0.7rem; text-transform:uppercase; margin-bottom:0; letter-spacing: 0.5px;">Psychology Speedometer</p>', unsafe_allow_html=True)
@@ -511,17 +604,13 @@ with tab6:
                 w_html = f"<div style='display:flex; justify-content:space-between; padding: 4px 8px; margin-bottom:3px; background:rgba(30,41,59,0.3); border-radius:3px; border:1px solid rgba(56,189,248,0.15)'><span style='color:#E2E8F0; font-size:0.72rem; font-family:Inter; text-transform:capitalize;'>📍 {word}</span><span style='color:#C8A84B; font-weight:700; font-size:0.72rem; font-family:monospace;'>{freq}x</span></div>"
                 target_col.markdown(w_html, unsafe_allow_html=True)
 
-    # --- 5. EXECUTIVE SUMMARY READOUT ---
     st.markdown('<div class="section-header" style="margin-top:0.5rem;">TERMINAL INTELLIGENCE REAL-TIME FEED</div>', unsafe_allow_html=True)
     
     up_count = sum(1 for s in stocks if s['change'] > 0)
     sentiment_text = "bullish" if avg_sentiment > 0.15 else "bearish" if avg_sentiment < -0.15 else "neutral"
     
-    # Executing 2-line strategic diagnostic readout
     st.info(f"**Terminal Diagnostic Summary:** Global equities confirm localized support with {up_count} of {len(stocks)} raw production indices moving green. Aggregated algorithmic web-scraping tracking identifies a distinct **{sentiment_text}** sector posture (VADER Vector: {avg_sentiment:+.2f}), indicating a supply-side stabilization aligned with structural AI pricing projections.")
 
-    # --- 6. NATIVE STREAMLIT COMPACT SCROLLING WINDOW ---
-    # FIXED: Replaced brittle custom HTML containers with a native Streamlit container to ensure all headlines display cleanly
     with st.container(height=240, border=True):
         for index, row in news_df.iterrows():
             row_html = f"<div style='margin-bottom: 4px; padding: 5px 8px; border-radius: 4px; background: linear-gradient(90deg, #0A0F1A 0%, rgba(10,15,26,0.2) 100%); border-left: 2px solid {row['Color']}; display: flex; align-items: center; justify-content: space-between;'><div style='display: flex; align-items: center; gap: 10px;'><span style='color: {row['Color']}; font-weight: 700; font-family: Rajdhani; font-size: 0.7rem; width: 75px; display: inline-block;'>{row['Sentiment']}</span><span style='color: #E2E8F0; font-size: 0.75rem;'>{row['Headline']}</span></div><span style='color: #475569; font-size: 0.62rem; font-family: monospace; white-space: nowrap; margin-left:10px;'>{row['Published']}</span></div>"
